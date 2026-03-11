@@ -103,9 +103,7 @@ func startA() {
 
 func relayOneWayA(dst, src net.Conn) {
 	defer func() {
-		dst.Close()
-		src.Close()
-		log.Printf("[A] client disconnected: %s -> %s\n", src.RemoteAddr(), dst.RemoteAddr())
+		log.Printf("[A] relay direction: %s -> %s completed\n", src.RemoteAddr(), dst.RemoteAddr())
 	}()
 	io.Copy(dst, src)
 }

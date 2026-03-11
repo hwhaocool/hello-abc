@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -41,9 +42,9 @@ func checkConfigC() {
 	}
 }
 
-func handleClient(conn net.Conn) {
-	defer conn.Close()
-	log.Println("[C] new connection from", conn.RemoteAddr())
+func handleClient(tunnelConn net.Conn) {
+	defer tunnelConn.Close()
+	log.Printf("[C] new tunnel connection from %s\n", tunnelConn.RemoteAddr())
 
 	for {
 		// 连接转发目标
@@ -54,25 +55,38 @@ func handleClient(conn net.Conn) {
 			continue
 		}
 
-		log.Println("[C] connected to forward, starting relay")
+		log.Printf("[C] connected to forward, starting relay tunnel<->forward\n")
 
 		// 中继数据
-		doneRelay := make(chan struct{})
+		var wg sync.WaitGroup
+		forwardCloseOnce := sync.Once{}
+		wg.Add(2)
+
 		go func() {
-			defer close(doneRelay)
-			if _, err := relayOneWayC(conn, forwardConn); err != nil {
-				log.Printf("[C] relay conn->forward error: %v", err)
-			}
-		}()
-		go func() {
-			defer close(doneRelay)
-			if _, err := relayOneWayC(forwardConn, conn); err != nil {
-				log.Printf("[C] relay forward->conn error: %v", err)
-			}
+			defer wg.Done()
+			defer func() {
+				forwardCloseOnce.Do(func() {
+					log.Printf("[C] closing forward connection: %s\n", forwardConn.RemoteAddr())
+					forwardConn.Close()
+				})
+			}()
+			relayOneWayC(tunnelConn, forwardConn)
 		}()
 
-		// 等待任一方向断开
-		<-doneRelay
+		go func() {
+			defer wg.Done()
+			defer func() {
+				forwardCloseOnce.Do(func() {
+					log.Printf("[C] closing forward connection: %s\n", forwardConn.RemoteAddr())
+					forwardConn.Close()
+				})
+			}()
+			relayOneWayC(forwardConn, tunnelConn)
+		}()
+
+		// 等待两个方向都完成
+		wg.Wait()
+
 		log.Println("[C] forward connection lost, reconnecting in 3s...")
 		time.Sleep(3 * time.Second)
 	}
@@ -84,12 +98,13 @@ func connectForward() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println("[C] connected to forward")
+	log.Printf("[C] connected to forward from %s\n", conn.RemoteAddr())
 	return conn, nil
 }
 
-func relayOneWayC(dst, src net.Conn) (int64, error) {
-	defer dst.Close()
-	defer src.Close()
-	return io.Copy(dst, src)
+func relayOneWayC(dst, src net.Conn) {
+	defer func() {
+		log.Printf("[C] relay direction: %s -> %s completed\n", src.RemoteAddr(), dst.RemoteAddr())
+	}()
+	io.Copy(dst, src)
 }

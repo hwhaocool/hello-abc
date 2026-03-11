@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -34,22 +35,25 @@ func startB() {
 		log.Println("[B] starting relay A <-> C")
 
 		// 中继数据
-		done := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
 		go func() {
-			defer close(done)
-			if _, err := relayOneWay(connA, connC); err != nil {
-				log.Printf("[B] relay A->C error: %v", err)
-			}
+			defer wg.Done()
+			defer func() {
+				log.Printf("[B] relay direction: %s -> %s completed\n", connA.RemoteAddr(), connC.RemoteAddr())
+			}()
+			relayOneWay(connA, connC)
 		}()
 		go func() {
-			defer close(done)
-			if _, err := relayOneWay(connC, connA); err != nil {
-				log.Printf("[B] relay C->A error: %v", err)
-			}
+			defer wg.Done()
+			defer func() {
+				log.Printf("[B] relay direction: %s -> %s completed\n", connC.RemoteAddr(), connA.RemoteAddr())
+			}()
+			relayOneWay(connC, connA)
 		}()
 
-		// 等待任一方向断开
-		<-done
+		// 等待两个方向都完成
+		wg.Wait()
 		log.Println("[B] connection lost, reconnecting in 3s...")
 		time.Sleep(3 * time.Second)
 	}
@@ -79,7 +83,7 @@ func connectA() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println("[B] connected to A")
+	log.Printf("[B] connected to A from %s\n", conn.RemoteAddr())
 	return conn, nil
 }
 
@@ -89,12 +93,10 @@ func connectC() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println("[B] connected to C")
+	log.Printf("[B] connected to C from %s\n", conn.RemoteAddr())
 	return conn, nil
 }
 
-func relayOneWay(dst, src net.Conn) (int64, error) {
-	defer dst.Close()
-	defer src.Close()
-	return io.Copy(dst, src)
+func relayOneWay(dst, src net.Conn) {
+	io.Copy(dst, src)
 }
