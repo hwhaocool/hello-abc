@@ -17,7 +17,7 @@ func startA() {
 		log.Fatal("[A] Q2 listen tunnel port failed", tunnelPort, err)
 	}
 	defer tunnelLn.Close()
-	log.Println("[A] waiting for B connection")
+	log.Println("[A] waiting for B connection at port ", tunnelPort)
 
 	tunnelConn, err := tunnelLn.Accept()
 	if err != nil {
@@ -35,7 +35,7 @@ func startA() {
 		log.Fatal("[A] Q5 listen server port failed", serverPort, err)
 	}
 	defer userLn.Close()
-	log.Println("[A] waiting for user connection")
+	log.Println("[A] waiting for user connection at port", serverPort)
 
 	userConn, err := userLn.Accept()
 	if err != nil {

@@ -19,7 +19,7 @@ func startC() {
 	if err != nil {
 		log.Fatal("[C] Q2 failed to listen port", tunnelPort, err)
 	}
-	log.Printf("[C] service listening on :%d", tunnelPort)
+	log.Printf("[C] service listening on :%d\n", tunnelPort)
 
 	for {
 		conn, err := listener.Accept()
