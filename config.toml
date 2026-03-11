@@ -1,0 +1,10 @@
+role = "a"
+
+[a]
+ip = "127.0.0.1"
+port_tunnel = 8080
+port_server = 8081
+
+[c]
+ip = "127.0.0.1"
+port_tunnel = 8083
