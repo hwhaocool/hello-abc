@@ -9,6 +9,9 @@ import (
 )
 
 func startB() {
+
+	checkConfig()
+
 	for {
 		// 连接 A
 		connA, err := connectA()
@@ -49,6 +52,24 @@ func startB() {
 		<-done
 		log.Println("[B] connection lost, reconnecting in 3s...")
 		time.Sleep(3 * time.Second)
+	}
+}
+
+func checkConfig() {
+	if cfg.A.IP == "" {
+		log.Fatalln("[B] Q3, ip of A not set")
+	}
+
+	if cfg.A.PortTunnel == 0 {
+		log.Fatalln("[B] Q4, tunnel port of A not set")
+	}
+
+	if cfg.C.IP == "" {
+		log.Fatalln("[B] Q5, ip of C not set")
+	}
+
+	if cfg.C.PortTunnel == 0 {
+		log.Fatalln("[B] Q6, tunnel port of C not set")
 	}
 }
 

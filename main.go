@@ -19,7 +19,7 @@ func init() {
 }
 
 func main() {
-	color.Magenta("Role: %s\n", cfg.Role)
+	color.Magenta("version %s, Role: %s\n", Version, cfg.Role)
 
 	switch cfg.Role {
 	case "a":

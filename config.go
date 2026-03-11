@@ -21,8 +21,9 @@ type SectionA struct {
 }
 
 type SectionC struct {
-	IP         string `toml:"ip"`
-	PortTunnel int    `toml:"port_tunnel"`
+	IP           string `toml:"ip"`
+	PortTunnel   int    `toml:"port_tunnel"`
+	PortForward  int    `toml:"port_forward"`
 }
 
 func init() {

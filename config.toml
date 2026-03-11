@@ -8,3 +8,4 @@ port_server = 8081
 [c]
 ip = "127.0.0.1"
 port_tunnel = 8083
+port_forward = 8084
