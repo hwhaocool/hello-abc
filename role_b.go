@@ -6,56 +6,178 @@ import (
 	"log"
 	"net"
 	"sync"
-	"time"
 )
 
-func startB() {
+// RoleB 管理 B 角色的所有状态
+type RoleB struct {
+	connA     net.Conn
+	connC     net.Conn
+	connAMu   sync.Mutex
+	connCMu   sync.Mutex
+	connAReady sync.Cond
+	connCReady sync.Cond
 
+	// 用于通知连接断开事件
+	aDisconnected chan struct{}
+	cDisconnected chan struct{}
+}
+
+func startB() {
 	checkConfig()
 
+	rb := &RoleB{
+		aDisconnected: make(chan struct{}, 1),
+		cDisconnected: make(chan struct{}, 1),
+	}
+	rb.connAReady.L = &rb.connAMu
+	rb.connCReady.L = &rb.connCMu
+
+	// 启动 A 连接管理器
+	go rb.manageA()
+
+	// 启动 C 连接管理器
+	go rb.manageC()
+
+	// 主中继循环
+	rb.runRelay()
+}
+
+// manageA 管理 A 的连接
+func (rb *RoleB) manageA() {
 	for {
-		// 连接 A
+		// 1. 连接 A
 		connA, err := connectA()
 		if err != nil {
-			log.Println("[B] Q1 failed to connect A, retrying in 3s", err)
-			time.Sleep(3 * time.Second)
+			log.Println("[B] failed to connect A, retrying in 1s", err)
+			sleep(1000)
 			continue
 		}
-		defer connA.Close()
 
-		// 连接 C
+		// 2. 更新连接
+		rb.connAMu.Lock()
+		oldConn := rb.connA
+		rb.connA = connA
+		addr := connA.RemoteAddr().String()
+		rb.connAMu.Unlock()
+
+		if oldConn != nil {
+			log.Println("[B] closing old A connection")
+			oldConn.Close()
+		}
+		log.Printf("[B] A connected from %s\n", addr)
+
+		// 3. 通知等待者
+		rb.connAReady.Broadcast()
+
+		// 4. 等待 runRelay 发来的断开信号
+		<-rb.aDisconnected
+		log.Println("[B] A disconnection requested")
+
+		// 5. 清理连接
+		rb.connAMu.Lock()
+		if rb.connA == connA {
+			rb.connA = nil
+		}
+		connA.Close()
+		rb.connAMu.Unlock()
+	}
+}
+
+// manageC 管理 C 的连接
+func (rb *RoleB) manageC() {
+	for {
+		// 1. 连接 C
 		connC, err := connectC()
 		if err != nil {
-			log.Println("[B] Q2 failed to connect C, retrying in 3s", err)
-			time.Sleep(3 * time.Second)
+			log.Println("[B] failed to connect C, retrying in 1s", err)
+			sleep(1000)
 			continue
 		}
-		defer connC.Close()
+
+		// 2. 更新连接
+		rb.connCMu.Lock()
+		oldConn := rb.connC
+		rb.connC = connC
+		addr := connC.RemoteAddr().String()
+		rb.connCMu.Unlock()
+
+		if oldConn != nil {
+			log.Println("[B] closing old C connection")
+			oldConn.Close()
+		}
+		log.Printf("[B] C connected from %s\n", addr)
+
+		// 3. 通知等待者
+		rb.connCReady.Broadcast()
+
+		// 4. 等待 runRelay 发来的断开信号
+		<-rb.cDisconnected
+		log.Println("[B] C disconnection requested")
+
+		// 5. 清理连接
+		rb.connCMu.Lock()
+		if rb.connC == connC {
+			rb.connC = nil
+		}
+		connC.Close()
+		rb.connCMu.Unlock()
+	}
+}
+
+// runRelay 运行中继循环
+func (rb *RoleB) runRelay() {
+	for {
+		// 等待两个连接都就绪
+		rb.connAMu.Lock()
+		for rb.connA == nil {
+			rb.connAReady.Wait()
+		}
+		currentConnA := rb.connA
+		rb.connAMu.Unlock()
+
+		rb.connCMu.Lock()
+		for rb.connC == nil {
+			rb.connCReady.Wait()
+		}
+		currentConnC := rb.connC
+		rb.connCMu.Unlock()
 
 		log.Println("[B] starting relay A <-> C")
 
-		// 中继数据
-		var wg sync.WaitGroup
-		wg.Add(2)
+		// 任意一个方向完成就通知对应的连接管理器
+		done := make(chan connDirection, 2)
+
 		go func() {
-			defer wg.Done()
-			defer func() {
-				log.Printf("[B] relay direction: %s -> %s completed\n", connA.RemoteAddr(), connC.RemoteAddr())
-			}()
-			relayOneWay(connA, connC)
-		}()
-		go func() {
-			defer wg.Done()
-			defer func() {
-				log.Printf("[B] relay direction: %s -> %s completed\n", connC.RemoteAddr(), connA.RemoteAddr())
-			}()
-			relayOneWay(connC, connA)
+			relayOneWay(currentConnA, currentConnC)
+			done <- dirA
 		}()
 
-		// 等待两个方向都完成
-		wg.Wait()
-		log.Println("[B] connection lost, reconnecting in 3s...")
-		time.Sleep(3 * time.Second)
+		go func() {
+			relayOneWay(currentConnC, currentConnA)
+			done <- dirC
+		}()
+
+		// 等待第一个完成的方向
+		direction := <-done
+		log.Printf("[B] relay stopped, direction: %d\n", direction)
+
+		// 立即关闭两个连接，加速中继退出
+		currentConnA.Close()
+		currentConnC.Close()
+
+		// 通知对应的连接管理器重连
+		switch direction {
+		case dirA:
+			select {
+			case rb.aDisconnected <- struct{}{}:
+			default:
+			}
+		case dirC:
+			select {
+			case rb.cDisconnected <- struct{}{}:
+			default:
+			}
+		}
 	}
 }
 
@@ -78,23 +200,11 @@ func checkConfig() {
 }
 
 func connectA() (net.Conn, error) {
-	log.Println("[B] connecting to A")
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", cfg.A.IP, cfg.A.PortTunnel))
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("[B] connected to A from %s\n", conn.RemoteAddr())
-	return conn, nil
+	return net.Dial("tcp", fmt.Sprintf("%s:%d", cfg.A.IP, cfg.A.PortTunnel))
 }
 
 func connectC() (net.Conn, error) {
-	log.Println("[B] connecting to C")
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", cfg.C.IP, cfg.C.PortTunnel))
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("[B] connected to C from %s\n", conn.RemoteAddr())
-	return conn, nil
+	return net.Dial("tcp", fmt.Sprintf("%s:%d", cfg.C.IP, cfg.C.PortTunnel))
 }
 
 func relayOneWay(dst, src net.Conn) {
