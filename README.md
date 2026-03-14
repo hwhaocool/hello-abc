@@ -13,6 +13,9 @@ hello-abc  受限中继代理（Restricted Relay Proxy）
 2. B可以单向连上A和C， 反之不行
 
 ## 使用
+
+注意⚠ ：整个隧道同时只支持一个用户使用
+
 在程序同一个目录下，新建配置文件 `config.toml`
 
 内容为:
@@ -75,3 +78,4 @@ role = "c"
 port_tunnel = 8083
 port_forward = 22
 ```
+
