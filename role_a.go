@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -140,14 +139,15 @@ func (ra *RoleA) handleUser(conn net.Conn) {
 
 	// 中继数据
 	done := make(chan connDirection, 2)
+	stopRelay := make(chan struct{}, 1)
 
 	go func() {
-		relayOneWayA(conn, currentTunnelConn)
+		relayOneWayA(conn, currentTunnelConn, stopRelay)
 		done <- dirUser
 	}()
 
 	go func() {
-		relayOneWayA(currentTunnelConn, conn)
+		relayOneWayA(currentTunnelConn, conn, stopRelay)
 		done <- dirTunnel
 	}()
 
@@ -155,25 +155,47 @@ func (ra *RoleA) handleUser(conn net.Conn) {
 	direction := <-done
 	log.Printf("[A] relay stopped, direction: %d\n", direction)
 
-	// 立即关闭两个连接
-	conn.Close()
-	currentTunnelConn.Close()
+	// 发送停止信号，确保另一个方向的 relay 也退出
+	stopRelay <- struct{}{}
 
-	// 通知对应的连接管理器
 	switch direction {
 	case dirTunnel:
+		// 隧道断开，关闭用户连接并通知隧道管理器
+		conn.Close()
 		select {
 		case ra.tunnelDisconnected <- struct{}{}:
 		default:
 		}
 	case dirUser:
-		// 用户断开，不需要特别处理
+		// 用户断开，只关闭用户连接，保持隧道连接存活
+		conn.Close()
+		log.Println("[A] user disconnected, tunnel connection kept alive")
 	}
 }
 
-func relayOneWayA(dst, src net.Conn) {
+func relayOneWayA(dst, src net.Conn, stopRelay chan struct{}) {
 	defer func() {
 		log.Printf("[A] relay direction: %s -> %s completed\n", src.RemoteAddr(), dst.RemoteAddr())
 	}()
-	io.Copy(dst, src)
+
+	// 使用 buffered reader 和 writer 实现 io.Copy，支持中断
+	buf := make([]byte, 32*1024)
+	for {
+		select {
+		case <-stopRelay:
+			log.Println("[A] relay stopped by signal")
+			return
+		default:
+			n, err := src.Read(buf)
+			if err != nil {
+				return
+			}
+			if n > 0 {
+				_, writeErr := dst.Write(buf[:n])
+				if writeErr != nil {
+					return
+				}
+			}
+		}
+	}
 }
