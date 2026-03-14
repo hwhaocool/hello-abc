@@ -1,6 +1,18 @@
 hello-abc  受限中继代理（Restricted Relay Proxy）
 ----
 
+```mermaid
+graph TD    
+    subgraph ide1 [tunnel]
+    b --> a -.->c
+    b --> c
+    end
+    
+    u[User] ---> a    
+
+
+```
+
 [TOC]
 
 ## 功能
